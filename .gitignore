@@ -1,0 +1,36 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+
+# Next.js / build output
+/.next/
+/out/
+/build/
+/dist/
+
+# local Vercel state
+.vercel
+
+# environment files (keep the safe template)
+.env*
+!.env.example
+
+# tests / tooling
+/coverage/
+/playwright-report/
+/test-results/
+/.turbo/
+/.eslintcache
+
+# editors and OS
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+
+# logs and local artifacts
+*.log
+npm-debug.log*
+*.tsbuildinfo
