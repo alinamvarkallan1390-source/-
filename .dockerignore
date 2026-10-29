@@ -1,0 +1,6 @@
+.git
+node_modules
+public
+backend/bin
+backend/obj
+backend/*.db*

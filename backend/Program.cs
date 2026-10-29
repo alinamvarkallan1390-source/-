@@ -1,11 +1,22 @@
 using System.Security.Cryptography;
 using System.Text;
+using System.Threading.RateLimiting;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<Db>(o => o.UseSqlite(builder.Configuration.GetConnectionString("Nexora") ?? "Data Source=nexora.db"));
-builder.Services.AddRateLimiter(o => o.AddFixedWindowLimiter("api", p => { p.PermitLimit = 120; p.Window = TimeSpan.FromMinutes(1); p.QueueLimit = 0; }));
+builder.Services.AddRateLimiter(o => {
+ o.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+ o.AddPolicy("api", context => RateLimitPartition.GetFixedWindowLimiter(
+  context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions {
+   PermitLimit = 300, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
+  }));
+ o.AddPolicy("auth", context => RateLimitPartition.GetFixedWindowLimiter(
+  context.Connection.RemoteIpAddress?.ToString() ?? "unknown", _ => new FixedWindowRateLimiterOptions {
+   PermitLimit = 12, Window = TimeSpan.FromMinutes(1), QueueLimit = 0, AutoReplenishment = true
+  }));
+});
 var app = builder.Build();
 app.UseRateLimiter();
 using (var scope = app.Services.CreateScope()) scope.ServiceProvider.GetRequiredService<Db>().Database.EnsureCreated();
@@ -25,13 +36,13 @@ api.MapPost("/auth/register", async (Register body, Db db) => {
  var u = new User { Username = username, DisplayName = display }; u.PasswordHash = hasher.HashPassword(u, body.Password); db.Users.Add(u);
  try { await db.SaveChangesAsync(); } catch (DbUpdateException) { return Results.Conflict(new { error = "Username already exists." }); }
  return Results.Ok(new { u.Id, u.Username, u.DisplayName });
-});
+}).RequireRateLimiting("auth");
 api.MapPost("/auth/login", async (Login body, Db db) => {
  var u = await db.Users.FirstOrDefaultAsync(x => x.Username == (body.Username ?? "").Trim().ToLowerInvariant());
  if (u == null || hasher.VerifyHashedPassword(u, u.PasswordHash, body.Password ?? "") == PasswordVerificationResult.Failed) return Results.Unauthorized();
  var token = Token(); db.Sessions.Add(new Session { UserId = u.Id, TokenHash = Hash(token), ExpiresAt = DateTime.UtcNow.AddDays(7) }); await db.SaveChangesAsync();
  return Results.Ok(new { token, expiresAt = DateTime.UtcNow.AddDays(7), user = new { u.Id, u.Username, u.DisplayName } });
-});
+}).RequireRateLimiting("auth");
 api.MapPost("/auth/logout", async (HttpRequest req, Db db) => { var h = Hash(Bearer(req)); var s = await db.Sessions.FirstOrDefaultAsync(x => x.TokenHash == h); if (s != null) { db.Sessions.Remove(s); await db.SaveChangesAsync(); } return Results.NoContent(); });
 api.MapPost("/chats", async (CreateChat body, HttpRequest req, Db db) => {
  var user = await UserFor(req, db); if (user == null) return Results.Unauthorized();
@@ -54,6 +65,18 @@ api.MapPost("/chats/{id:long}/messages", async (long id, SendMessage body, HttpR
  var user = await UserFor(req, db); if (user == null) return Results.Unauthorized(); var chat = await db.Chats.FirstOrDefaultAsync(c => c.Id == id && (c.User1Id == user.Id || c.User2Id == user.Id)); if (chat == null) return Results.NotFound();
  var text = body.Text?.Trim() ?? ""; if (text.Length is < 1 or > 4000) return Results.BadRequest(new { error = "Text must be 1–4000 characters." });
  var m = new Message { ChatId = id, SenderUserId = user.Id, Text = text, CreatedAt = DateTime.UtcNow }; db.Messages.Add(m); await db.SaveChangesAsync(); return Results.Ok(new { m.Id, m.ChatId, m.Text, m.CreatedAt });
+});
+api.MapPut("/chats/{chatId:long}/messages/{messageId:long}", async (long chatId, long messageId, SendMessage body, HttpRequest req, Db db) => {
+ var user = await UserFor(req, db); if (user == null) return Results.Unauthorized();
+ var m = await db.Messages.FirstOrDefaultAsync(x => x.Id == messageId && x.ChatId == chatId && x.SenderUserId == user.Id);
+ if (m == null) return Results.NotFound();
+ var text = body.Text?.Trim() ?? ""; if (text.Length is < 1 or > 4000) return Results.BadRequest(new { error = "Text must be 1–4000 characters." });
+ m.Text = text; await db.SaveChangesAsync(); return Results.Ok(new { m.Id, m.ChatId, m.Text, m.CreatedAt });
+});
+api.MapDelete("/chats/{chatId:long}/messages/{messageId:long}", async (long chatId, long messageId, HttpRequest req, Db db) => {
+ var user = await UserFor(req, db); if (user == null) return Results.Unauthorized();
+ var m = await db.Messages.FirstOrDefaultAsync(x => x.Id == messageId && x.ChatId == chatId && x.SenderUserId == user.Id);
+ if (m == null) return Results.NotFound(); db.Messages.Remove(m); await db.SaveChangesAsync(); return Results.NoContent();
 });
 api.MapPost("/bots", async (CreateBot body, HttpRequest req, Db db) => {
  var user = await UserFor(req, db); if (user == null) return Results.Unauthorized(); var name = (body.Username ?? "").Trim().ToLowerInvariant(); var display = body.DisplayName?.Trim() ?? "";
