@@ -1,0 +1,35 @@
+<!doctype html><html lang="fa" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>مستندات ربات نکسورا</title><style>body{font:15px/2 Tahoma,sans-serif;background:#f7f7fc;color:#30344a;margin:0}main{max-width:850px;margin:40px auto;padding:0 24px}h1,h2{color:#6557d6}a{color:#6557d6}article{background:white;border:1px solid #ecebf6;border-radius:18px;padding:28px;margin:20px 0}pre{direction:ltr;text-align:left;background:#25283b;color:#e8e6ff;overflow:auto;padding:18px;border-radius:12px;line-height:1.7;font:13px/1.7 monospace}.notice{background:#fff4df;border-radius:12px;padding:15px}code{direction:ltr;display:inline-block}table{width:100%;border-collapse:collapse}td,th{border-bottom:1px solid #eee;text-align:right;padding:8px}</style></head><body><main><a href="/">← بازگشت به نکسورا</a><h1>✦ مستندات ربات نکسورا</h1><p>راهنمای نسخهٔ اولیهٔ API ربات · ASP.NET Core 8</p><div class="notice">رابطی که روی Vercel منتشر می‌شود فقط یک دموی محلی است و توکن واقعی تولید نمی‌کند. API زیر نیاز به اجرای جداگانهٔ بک‌اند ASP.NET دارد. این نسخه هنوز برای استفادهٔ عمومی یا اطلاعات حساس آماده نیست.</div><article><h2>۱. ساخت ربات</h2><p>در کلاینت متصل به بک‌اند، وارد حساب شوید و از دکمهٔ «ساخت ربات» استفاده کنید. نام کاربری انگلیسی باید با <code>_bot</code> تمام شود. توکن فقط یک‌بار نمایش داده می‌شود؛ مثل رمز عبور محرمانه نگهش دارید.</p><p>یا با API حساب کاربری:</p><pre>curl -X POST "$BASE/api/bots" \
+  -H "Authorization: Bearer $USER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"username":"hello_bot","displayName":"Hello Bot"}'</pre><p>خروجی شامل <code>id</code>، <code>username</code> و <code>token</code> است. توکن حساب کاربری و توکن ربات با هم فرق دارند. ربات نمی‌تواند به کاربری که هنوز چت با آن را ایجاد نکرده پیام بفرستد.</p></article><article><h2>۲. شروع گفتگو و دریافت پیام</h2><p>کاربر در نکسورا با نام کاربری ربات گفتگویی می‌سازد و پیام می‌فرستد. برنامهٔ ربات سپس با polling پیام‌ها را می‌خواند:</p><pre>curl "$BASE/api/bot/updates?offset=0" \
+  -H "Authorization: Bearer $BOT_TOKEN"</pre><p>خروجی آرایه‌ای با فیلدهای <code>updateId</code>، <code>chatId</code>، <code>fromUserId</code>، <code>text</code> و <code>createdAt</code> است. در درخواست بعدی، بزرگ‌ترین <code>updateId</code> پردازش‌شده را به عنوان <code>offset</code> بفرستید. پاسخ‌ها حداکثر ۱۰۰ پیام دارند. offset را بعد از پردازش موفق به‌طور پایدار ذخیره کنید تا تکرار یا از دست رفتن پیام مدیریت شود.</p></article><article><h2>۳. ارسال پاسخ</h2><pre>curl -X POST "$BASE/api/bot/messages" \
+  -H "Authorization: Bearer $BOT_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"chatId":1,"text":"سلام از ربات نکسورا!"}'</pre><p>به جای ۱ شناسهٔ واقعی گفتگو را از update بگذارید. متن باید بین ۱ تا ۴۰۰۰ کاراکتر باشد. ربات فقط به گفتگوهای خودش دسترسی دارد.</p></article><article><h2>نمونهٔ ساده با Node.js ۱۸+</h2><p>متغیرهای محیطی <code>BASE</code> و <code>BOT_TOKEN</code> را در محیط امن تنظیم کنید. این مثال صرفاً آموزشی است؛ offset بعد از restart حفظ نمی‌شود.</p><pre>const base = process.env.BASE;
+const token = process.env.BOT_TOKEN;
+let offset = 0;
+async function request(path, options = {}) {
+  const res = await fetch(base + path, {
+    ...options,
+    headers: { Authorization: `Bearer ${token}`,
+      'Content-Type': 'application/json' }
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}
+async function run() {
+  while (true) {
+    try {
+      const updates = await request(`/api/bot/updates?offset=${offset}`);
+      for (const u of updates) {
+        await request('/api/bot/messages', {
+          method: 'POST',
+          body: JSON.stringify({chatId: u.chatId, text: `سلام! گفتی: ${u.text}`})
+        });
+        offset = u.updateId;
+      }
+    } catch (error) { console.error(error.message); }
+    await new Promise(resolve => setTimeout(resolve, 3000));
+  }
+}
+run();</pre></article><article><h2>محدودیت‌ها و امنیت</h2><p>در این نسخه webhook، دکمه، فایل، گروه، کانال، پرداخت، مدیریت توکن و رمزنگاری سرتاسری وجود ندارد. برای محیط واقعی HTTPS، ذخیره‌سازی پایدار، کنترل نرخ بر اساس IP و حساب، بازیابی و چرخش توکن، لاگ امن، مانیتورینگ و بازبینی امنیتی لازم است. هرگز توکن را در کد سمت مرورگر یا مخزن عمومی قرار ندهید. این API با Bot API تلگرام سازگار نیست.</p><p>منابع الهام: <a href="https://telegram.org/faq">پرسش‌های متداول تلگرام</a> و <a href="https://core.telegram.org/bots/api">مستندات Bot API تلگرام</a>.</p></article></main></body></html>
