@@ -1,3 +1,5 @@
 backend/bin/
 backend/obj/
 backend/*.db*
+node_modules/
+public/
